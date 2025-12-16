@@ -81,34 +81,40 @@ def get_columns():
 			"fieldtype": "Percent",
 		},
 		{
-			"fieldname": "total_paid",
-			"label": _("إجمالي المدفوع"),
+			"fieldname": "mode_of_payment",
+			"label": _("طريقة الدفع"),
+			"fieldtype": "Link",
+			"options": "Mode of Payment",
+		},
+		{
+			"fieldname": "paid_amount",
+			"label": _("المبلغ المدفوع"),
 			"fieldtype": "Currency",
 		},
 		{
-			"fieldname": "total_papers",
-			"label": _("إجمالي الأوراق"),
-			"fieldtype": "Int",
-		},
-		{
-			"fieldname": "stamp_value",
-			"label": _("قيمة الدمغة"),
+			"fieldname": "total_allocated_amount",
+			"label": _("إجمالي المبلغ المخصص"),
 			"fieldtype": "Currency",
 		},
 		{
-			"fieldname": "net_amount_paid",
-			"label": _("صافي المبلغ المدفوع"),
+			"fieldname": "custom_total_taxes",
+			"label": _("إجمالي الاستقطاعات"),
 			"fieldtype": "Currency",
 		},
 		{
-			"fieldname": "amount_eligible_for_commission",
-			"label": _("المبلغ الخاضع للعمولة"),
+			"fieldname": "custom_total_cheques_amount",
+			"label": _("إجمالي مبلغ الشيكات"),
 			"fieldtype": "Currency",
 		},
 		{
-			"fieldname": "incentives",
-			"label": _("قيمة العمولة"),
-			"fieldtype": "Currency",
+			"fieldname": "reference_date",
+			"label": _("تاريخ المرجع"),
+			"fieldtype": "Date",
+		},
+		{
+			"fieldname": "reference_no",
+			"label": _("رقم المرجع"),
+			"fieldtype": "Data",
 		}
 	]
 	
@@ -125,47 +131,8 @@ def get_data(filters):
 	Returns:
 		list: List of dictionaries containing report data
 	"""
-	# Build SQL query with CTEs
+	# Query: One row per invoice with aggregated payment data
 	query = """
-		WITH invoice_payments AS (
-			SELECT
-				per.reference_name AS invoice_name,
-				SUM(per.allocated_amount) AS total_paid
-			FROM `tabPayment Entry` pe
-			INNER JOIN `tabPayment Entry Reference` per ON per.parent = pe.name
-			WHERE pe.docstatus = 1
-				AND per.reference_doctype = 'Sales Invoice'
-			GROUP BY per.reference_name
-		),
-		
-		invoice_papers AS (
-			SELECT
-				per.reference_name AS invoice_name,
-				SUM(COALESCE(pe.custom_عدد_اوراق_العقد, 0)) AS total_contract_papers
-			FROM `tabPayment Entry` pe
-			INNER JOIN `tabPayment Entry Reference` per ON per.parent = pe.name
-			WHERE pe.docstatus = 1
-				AND per.reference_doctype = 'Sales Invoice'
-			GROUP BY per.reference_name
-		),
-		
-		invoice_vat AS (
-			SELECT
-				parent AS invoice_name,
-				SUM(COALESCE(base_tax_amount_after_discount_amount, 0)) AS invoice_vat_total
-			FROM `tabSales Taxes and Charges`
-			WHERE docstatus = 1
-			GROUP BY parent
-		),
-		
-		sales_persons AS (
-			SELECT
-				parent AS invoice_name,
-				sales_person
-			FROM `tabSales Team`
-			WHERE parenttype = 'Sales Invoice'
-		)
-		
 		SELECT
 			si.name AS sales_invoice,
 			si.company,
@@ -174,90 +141,28 @@ def get_data(filters):
 			si.custom_sales_invoice_number AS customer_invoice_reference_no,
 			si.grand_total,
 			(si.grand_total - COALESCE(si.total_taxes_and_charges, 0)) AS subtotal_without_vat,
-			COALESCE(ip.total_paid, 0) AS total_paid,
-			COALESCE(ipapers.total_contract_papers, 0) AS total_papers,
-			(COALESCE(ipapers.total_contract_papers, 0) * 3 * 0.90) AS stamp_value,
-			sp.sales_person,
-			COALESCE(st.commission_rate, 0) AS commission_rate,
-			COALESCE(iv.invoice_vat_total, 0) AS invoice_vat_total,
-			/* Net payable المعدل */
-			(
-				COALESCE(ip.total_paid, 0) -
-				(
-					COALESCE(ip.total_paid, 0) * 0.01 +
-					(
-						(
-							CASE WHEN si.grand_total BETWEEN 51 AND 250 THEN (si.grand_total - 50) * 0.048 ELSE 0 END +
-							CASE WHEN si.grand_total BETWEEN 251 AND 500 THEN (si.grand_total - 50) * 0.052 ELSE 0 END +
-							CASE WHEN si.grand_total BETWEEN 501 AND 1000 THEN (si.grand_total - 50) * 0.056 ELSE 0 END +
-							CASE WHEN si.grand_total BETWEEN 1001 AND 5000 THEN (si.grand_total - 50) * 0.06 ELSE 0 END +
-							CASE WHEN si.grand_total BETWEEN 5001 AND 10000 THEN (si.grand_total - 50) * 0.064 ELSE 0 END +
-							CASE WHEN si.grand_total > 10000 THEN (si.grand_total - 50) * 0.024 ELSE 0 END
-						) * (CASE WHEN si.grand_total > 0 THEN COALESCE(ip.total_paid, 0) / si.grand_total ELSE 0 END)
-					) +
-					(COALESCE(ipapers.total_contract_papers, 0) * 3 * 0.90) +
-					((COALESCE(iv.invoice_vat_total, 0) * 0.20) *
-						(CASE WHEN si.grand_total > 0 THEN COALESCE(ip.total_paid, 0) / si.grand_total ELSE 0 END))
-				)
-			) AS net_amount_paid,
-			/* المبلغ الخاضع للعمولة */
-			(
-				(
-					COALESCE(ip.total_paid, 0) -
-					(
-						COALESCE(ip.total_paid, 0) * 0.01 +
-						(
-							(
-								CASE WHEN si.grand_total BETWEEN 51 AND 250 THEN (si.grand_total - 50) * 0.048 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 251 AND 500 THEN (si.grand_total - 50) * 0.052 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 501 AND 1000 THEN (si.grand_total - 50) * 0.056 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 1001 AND 5000 THEN (si.grand_total - 50) * 0.06 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 5001 AND 10000 THEN (si.grand_total - 50) * 0.064 ELSE 0 END +
-								CASE WHEN si.grand_total > 10000 THEN (si.grand_total - 50) * 0.024 ELSE 0 END
-							) * (CASE WHEN si.grand_total > 0 THEN COALESCE(ip.total_paid, 0) / si.grand_total ELSE 0 END)
-						) +
-						(COALESCE(ipapers.total_contract_papers, 0) * 3 * 0.90) +
-						((COALESCE(iv.invoice_vat_total, 0) * 0.20) *
-							(CASE WHEN si.grand_total > 0 THEN COALESCE(ip.total_paid, 0) / si.grand_total ELSE 0 END))
-					)
-				)
-				- COALESCE(iv.invoice_vat_total, 0)
-			) AS amount_eligible_for_commission,
-			/* قيمة العمولة */
-			(
-				(
-					COALESCE(ip.total_paid, 0) -
-					(
-						COALESCE(ip.total_paid, 0) * 0.01 +
-						(
-							(
-								CASE WHEN si.grand_total BETWEEN 51 AND 250 THEN (si.grand_total - 50) * 0.048 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 251 AND 500 THEN (si.grand_total - 50) * 0.052 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 501 AND 1000 THEN (si.grand_total - 50) * 0.056 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 1001 AND 5000 THEN (si.grand_total - 50) * 0.06 ELSE 0 END +
-								CASE WHEN si.grand_total BETWEEN 5001 AND 10000 THEN (si.grand_total - 50) * 0.064 ELSE 0 END +
-								CASE WHEN si.grand_total > 10000 THEN (si.grand_total - 50) * 0.024 ELSE 0 END
-							) * (CASE WHEN si.grand_total > 0 THEN COALESCE(ip.total_paid, 0) / si.grand_total ELSE 0 END)
-						) +
-						(COALESCE(ipapers.total_contract_papers, 0) * 3 * 0.90) +
-						(
-							(COALESCE(iv.invoice_vat_total, 0) * 0.20) *
-							(CASE WHEN si.grand_total > 0 THEN COALESCE(ip.total_paid, 0) / si.grand_total ELSE 0 END)
-						)
-					)
-					- COALESCE(iv.invoice_vat_total, 0)
-				)
-				* (COALESCE(st.commission_rate, 0) / 100)
-			) AS incentives
+			(SELECT sales_person FROM `tabSales Team` 
+			 WHERE parent = si.name AND parenttype = 'Sales Invoice' 
+			 LIMIT 1) AS sales_person,
+			(SELECT commission_rate FROM `tabSales Team` 
+			 WHERE parent = si.name AND parenttype = 'Sales Invoice' 
+			 LIMIT 1) AS commission_rate,
+			GROUP_CONCAT(DISTINCT pe.mode_of_payment SEPARATOR ', ') AS mode_of_payment,
+			SUM(COALESCE(pe.paid_amount, 0)) AS paid_amount,
+			SUM(COALESCE(per.allocated_amount, 0)) AS total_allocated_amount,
+			SUM(COALESCE(pe.custom_total_taxes, 0)) AS custom_total_taxes,
+			SUM(COALESCE(pe.custom_total_cheques_amount, 0)) AS custom_total_cheques_amount,
+			GROUP_CONCAT(DISTINCT pe.reference_date SEPARATOR ', ') AS reference_date,
+			GROUP_CONCAT(DISTINCT pe.reference_no SEPARATOR ', ') AS reference_no
 		FROM `tabSales Invoice` si
-		LEFT JOIN invoice_payments ip ON ip.invoice_name = si.name
-		LEFT JOIN invoice_papers ipapers ON ipapers.invoice_name = si.name
-		LEFT JOIN invoice_vat iv ON iv.invoice_name = si.name
-		LEFT JOIN sales_persons sp ON sp.invoice_name = si.name
-		LEFT JOIN `tabSales Team` st
-			ON st.parent = si.name
-			AND st.parenttype = 'Sales Invoice'
-			AND st.sales_person = sp.sales_person
+		LEFT JOIN `tabPayment Entry Reference` per
+			ON per.reference_doctype = 'Sales Invoice'
+			AND per.reference_name = si.name
+		LEFT JOIN `tabPayment Entry` pe
+			ON pe.name = per.parent
+			AND pe.docstatus = 1
+			AND pe.party_type = 'Customer'
+			AND pe.company = si.company
 		WHERE si.docstatus = 1
 	"""
 	
@@ -267,25 +172,27 @@ def get_data(filters):
 	if conditions:
 		query += " AND " + conditions
 	
-	query += " ORDER BY si.posting_date DESC, si.name DESC"
+	query += """
+		GROUP BY si.name, si.company, si.customer, si.posting_date, 
+		         si.custom_sales_invoice_number, si.grand_total, si.total_taxes_and_charges
+		ORDER BY si.posting_date DESC, si.name DESC
+	"""
 	
-	# Execute query using frappe.db.sql with parameters
+	# Execute query
 	if params:
 		data = frappe.db.sql(query, params, as_dict=True)
 	else:
 		data = frappe.db.sql(query, as_dict=True)
 	
-	# Ensure all numeric fields are properly formatted
+	# Format numeric fields
 	for row in data:
 		row["grand_total"] = flt(row.get("grand_total", 0))
-		row["total_paid"] = flt(row.get("total_paid", 0))
-		row["net_amount_paid"] = flt(row.get("net_amount_paid", 0))
-		row["amount_eligible_for_commission"] = flt(row.get("amount_eligible_for_commission", 0))
-		row["incentives"] = flt(row.get("incentives", 0))
-		row["commission_rate"] = flt(row.get("commission_rate", 0))
-		row["total_papers"] = int(row.get("total_papers", 0))
-		row["stamp_value"] = flt(row.get("stamp_value", 0))
 		row["subtotal_without_vat"] = flt(row.get("subtotal_without_vat", 0))
+		row["commission_rate"] = flt(row.get("commission_rate", 0))
+		row["paid_amount"] = flt(row.get("paid_amount", 0))
+		row["total_allocated_amount"] = flt(row.get("total_allocated_amount", 0))
+		row["custom_total_taxes"] = flt(row.get("custom_total_taxes", 0))
+		row["custom_total_cheques_amount"] = flt(row.get("custom_total_cheques_amount", 0))
 	
 	return data
 
