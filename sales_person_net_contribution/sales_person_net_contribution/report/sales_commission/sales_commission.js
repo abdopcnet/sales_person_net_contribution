@@ -36,4 +36,19 @@ frappe.query_reports['sales_commission'] = {
 			options: 'Sales Person',
 		},
 	],
+	
+	formatter: function(value, row, column, data, default_formatter) {
+		value = default_formatter(value, row, column, data);
+		
+		// Make payment entries clickable
+		if (column.fieldname === 'payment_entries' && data.payment_entries) {
+			var payment_entries = data.payment_entries.split(', ');
+			var links = payment_entries.map(function(pe) {
+				return '<a href="/app/payment-entry/' + pe.trim() + '">' + pe.trim() + '</a>';
+			});
+			value = links.join(', ');
+		}
+		
+		return value;
+	}
 };
