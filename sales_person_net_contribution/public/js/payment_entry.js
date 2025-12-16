@@ -4,8 +4,8 @@
 frappe.ui.form.on('Payment Entry', {
 	refresh: function (frm) {
 		// Add direct button to calculate net contribution (green button)
-		if (frm.doc.docstatus === 1) {
-			// Only show button for submitted documents
+		// Only show button for submitted documents with payment_type = "Receive"
+		if (frm.doc.docstatus === 1 && frm.doc.payment_type === 'Receive') {
 			frm.page.add_inner_button(
 				__('Calculate Net Contribution'),
 				function () {
