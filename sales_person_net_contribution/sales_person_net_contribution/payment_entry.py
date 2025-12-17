@@ -20,12 +20,19 @@ def calculate_net_contribution(payment_entry_name):
             dict: Result message and calculated values
     """
     try:
+        # Clean and validate payment entry name
+        if not payment_entry_name:
+            frappe.throw(_("Payment Entry name is required"))
+
+        payment_entry_name = str(payment_entry_name).strip()
+
+        # Check if Payment Entry exists - frappe.db.exists handles None/empty automatically
+        if not frappe.db.exists("Payment Entry", payment_entry_name):
+            frappe.throw(_("Payment Entry {0} not found").format(
+                payment_entry_name))
+
         # Get Payment Entry document
         payment_entry = frappe.get_doc("Payment Entry", payment_entry_name)
-
-        # Validate payment entry exists
-        if not payment_entry:
-            frappe.throw(_("Payment Entry not found"))
 
         # Read references child table
         # Check for Sales Invoice or Sales Order
@@ -94,6 +101,10 @@ def calculate_net_contribution(payment_entry_name):
             frappe.throw(
                 _("Sales Order support will be added later. Please use Sales Invoice."))
 
+        # Get original Sales Team structure from Sales Invoice
+        # We'll get unique sales persons from the current Sales Invoice
+        # and use their commission_rate and allocated_percentage from the first occurrence
+
         # Get total taxes and charges from Sales Invoice
         # Convert to float to handle string values from database
         try:
@@ -116,65 +127,154 @@ def calculate_net_contribution(payment_entry_name):
             total_deductions - total_taxes_and_charges
 
         # Update Sales Invoice Sales Team
-        # Check if sales_team child table exists
-        if not hasattr(sales_invoice, 'sales_team') or not sales_invoice.sales_team:
-            frappe.throw(
-                _("No Sales Team found in Sales Invoice {0}").format(invoice_name))
+        # Step 1: Get original sales team structure using Frappe ORM
+        # Try to get Sales Team from: Sales Invoice -> Sales Order -> Customer
 
-        # Update each sales person in sales_team
+        original_sales_team = []
+        seen_sales_persons = set()
+
+        # Priority 1: Get sales team from Sales Invoice using ORM
+        if hasattr(sales_invoice, 'sales_team') and sales_invoice.sales_team:
+            for sales_person_row in sales_invoice.sales_team:
+                if sales_person_row.sales_person and sales_person_row.sales_person not in seen_sales_persons:
+                    original_sales_team.append({
+                        'sales_person': sales_person_row.sales_person,
+                        'commission_rate': sales_person_row.commission_rate,
+                        'allocated_percentage': sales_person_row.allocated_percentage,
+                    })
+                    seen_sales_persons.add(sales_person_row.sales_person)
+
+        # Priority 2: If no Sales Team in Invoice, try to get from Sales Order
+        if not original_sales_team and sales_invoice.get('items'):
+            # Check if Sales Invoice has Sales Order reference
+            sales_order_name = None
+            for item in sales_invoice.items:
+                if item.sales_order:
+                    sales_order_name = item.sales_order
+                    break
+
+            if sales_order_name:
+                try:
+                    sales_order = frappe.get_doc(
+                        "Sales Order", sales_order_name)
+                    if hasattr(sales_order, 'sales_team') and sales_order.sales_team:
+                        for sales_person_row in sales_order.sales_team:
+                            if sales_person_row.sales_person and sales_person_row.sales_person not in seen_sales_persons:
+                                original_sales_team.append({
+                                    'sales_person': sales_person_row.sales_person,
+                                    'commission_rate': sales_person_row.commission_rate,
+                                    'allocated_percentage': sales_person_row.allocated_percentage,
+                                })
+                                seen_sales_persons.add(
+                                    sales_person_row.sales_person)
+                except frappe.DoesNotExistError:
+                    pass
+
+        # Priority 3: If still no Sales Team, try to get from Customer
+        if not original_sales_team and sales_invoice.customer:
+            try:
+                customer = frappe.get_doc("Customer", sales_invoice.customer)
+                if hasattr(customer, 'sales_team') and customer.sales_team:
+                    for sales_person_row in customer.sales_team:
+                        if sales_person_row.sales_person and sales_person_row.sales_person not in seen_sales_persons:
+                            original_sales_team.append({
+                                'sales_person': sales_person_row.sales_person,
+                                'commission_rate': sales_person_row.commission_rate,
+                                'allocated_percentage': sales_person_row.allocated_percentage,
+                            })
+                            seen_sales_persons.add(
+                                sales_person_row.sales_person)
+            except frappe.DoesNotExistError:
+                pass
+
+        # If still no Sales Team found, throw error
+        if not original_sales_team:
+            frappe.throw(
+                _("No Sales Team found in Sales Invoice {0}, related Sales Order, or Customer. Please add Sales Team members first.").format(invoice_name))
+
+        # Step 2: Delete rows without custom_payment_entry
+        rows_to_remove = []
+        for sales_person_row in sales_invoice.sales_team:
+            if not getattr(sales_person_row, 'custom_payment_entry', None):
+                rows_to_remove.append(sales_person_row)
+
+        for row in rows_to_remove:
+            sales_invoice.remove(row)
+
+        # Step 3: Update or create rows for each sales person with current Payment Entry
         updated_count = 0
         sales_persons_details = []  # Store details for each sales person
+        payment_entry_date = payment_entry.posting_date or frappe.utils.today()
 
-        for sales_person_row in sales_invoice.sales_team:
-            if sales_person_row.sales_person:
-                # Get sales person name
-                sales_person_name = sales_person_row.sales_person
+        for sales_person_data in original_sales_team:
+            if not sales_person_data.get('sales_person'):
+                continue
 
-                # Get commission rate
-                # Handle both percentage format (e.g., 5 for 5%) and decimal format (e.g., 0.05)
-                # Convert to float to handle string values from database
-                commission_rate = sales_person_row.commission_rate
-                if commission_rate is None:
+            sales_person_name = sales_person_data['sales_person']
+
+            # Get commission rate
+            commission_rate = sales_person_data.get('commission_rate')
+            if commission_rate is None:
+                commission_rate = 0
+            else:
+                try:
+                    commission_rate = float(commission_rate)
+                except (ValueError, TypeError):
                     commission_rate = 0
-                else:
-                    try:
-                        commission_rate = float(commission_rate)
-                    except (ValueError, TypeError):
-                        commission_rate = 0
 
-                # Store original commission_rate for display
-                commission_rate_display = commission_rate
+            # Store original commission_rate for display
+            commission_rate_display = commission_rate
 
-                # Convert commission_rate to decimal if it's greater than 1 (assuming it's a percentage)
-                # If commission_rate is already in decimal format (0-1), use it as is
-                if commission_rate > 1:
-                    commission_rate_decimal = commission_rate / 100
-                else:
-                    commission_rate_decimal = commission_rate
+            # Convert commission_rate to decimal if it's greater than 1
+            if commission_rate > 1:
+                commission_rate_decimal = commission_rate / 100
+            else:
+                commission_rate_decimal = commission_rate
 
-                # Calculate incentives
-                # incentives = commission_rate * net_paid_after_all_deductions
-                # Use flt() to round the value like in original ERPNext code
-                incentives = flt(
-                    commission_rate_decimal * net_paid_after_all_deductions,
-                    precision=2  # 2 decimal places for currency
-                )
+            # Calculate incentives
+            incentives = flt(
+                commission_rate_decimal * net_paid_after_all_deductions,
+                precision=2
+            )
 
-                # Update only incentives field directly on the row
-                # Leave allocated_percentage unchanged (keep original value)
-                # This follows the same pattern as ERPNext selling_controller.py
-                sales_person_row.incentives = incentives
+            # Check if row exists with same custom_payment_entry and sales_person
+            existing_row = None
+            for row in sales_invoice.sales_team:
+                if (getattr(row, 'custom_payment_entry', None) == payment_entry_name and
+                        row.sales_person == sales_person_name):
+                    existing_row = row
+                    break
 
-                # Store details for message
-                sales_persons_details.append({
-                    "name": sales_person_name,
-                    "commission_rate": commission_rate_display,
-                    "incentives": incentives,
-                    "net_paid_after_all_deductions": net_paid_after_all_deductions,
-                    "commission_rate_decimal": commission_rate_decimal
+            if existing_row:
+                # Update existing row
+                existing_row.commission_rate = commission_rate_display
+                existing_row.allocated_percentage = sales_person_data.get(
+                    'allocated_percentage', 0)
+                existing_row.incentives = incentives
+                existing_row.custom_payment_entry = payment_entry_name
+                existing_row.custom_date = payment_entry_date
+                target_row = existing_row
+            else:
+                # Create new row in Sales Team
+                target_row = sales_invoice.append('sales_team', {
+                    'sales_person': sales_person_name,
+                    'commission_rate': commission_rate_display,
+                    'allocated_percentage': sales_person_data.get('allocated_percentage', 0),
+                    'incentives': incentives,
+                    'custom_payment_entry': payment_entry_name,
+                    'custom_date': payment_entry_date,
                 })
 
-                updated_count += 1
+            # Store details for message
+            sales_persons_details.append({
+                "name": sales_person_name,
+                "commission_rate": commission_rate_display,
+                "incentives": incentives,
+                "net_paid_after_all_deductions": net_paid_after_all_deductions,
+                "commission_rate_decimal": commission_rate_decimal
+            })
+
+            updated_count += 1
 
         if updated_count == 0:
             frappe.throw(_("No sales persons found in Sales Team to update"))
