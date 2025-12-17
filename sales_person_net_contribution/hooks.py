@@ -43,9 +43,9 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-doctype_js = {"Payment Entry" : "public/js/payment_entry.js"}
+doctype_js = {"Payment Entry": "public/js/payment_entry.js"}
+doctype_list_js = {"Payment Entry": "public/js/payment_entry_list.js"}
 # doctype_js = {"doctype" : "public/js/doctype.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -147,10 +147,10 @@ doctype_js = {"Payment Entry" : "public/js/payment_entry.js"}
 # }
 
 doc_events = {
-	"Payment Entry": {
-		"validate": "sales_person_net_contribution.sales_person_net_contribution.payment_entry.on_validate",
-		"on_submit": "sales_person_net_contribution.sales_person_net_contribution.payment_entry.on_submit",
-	}
+    "Payment Entry": {
+        "validate": "sales_person_net_contribution.sales_person_net_contribution.payment_entry.on_validate",
+        "on_submit": "sales_person_net_contribution.sales_person_net_contribution.payment_entry.on_submit",
+    }
 }
 
 # Scheduled Tasks
@@ -254,4 +254,3 @@ doc_events = {
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
