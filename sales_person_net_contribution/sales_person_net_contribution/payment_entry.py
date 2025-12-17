@@ -269,6 +269,27 @@ def calculate_net_contribution(payment_entry_name):
             _("Error calculating net contribution: {0}").format(str(e)))
 
 
+def on_validate(doc, method=None):
+    """
+    Automatically calculate net contribution when Payment Entry is validated (on save)
+    Only for payment_type = "Receive"
+    """
+    # Only process Payment Entry with payment_type = "Receive"
+    if doc.payment_type != "Receive":
+        return
+
+    # Call the calculation function
+    try:
+        calculate_net_contribution(doc.name)
+    except Exception as e:
+        # Log error but don't prevent save
+        frappe.log_error(
+            frappe.get_traceback(),
+            _("Error calculating net contribution on validate for Payment Entry {0}").format(
+                doc.name)
+        )
+
+
 def on_submit(doc, method=None):
     """
     Automatically calculate net contribution when Payment Entry is submitted
