@@ -150,6 +150,7 @@ doc_events = {
     "Payment Entry": {
         "validate": "sales_person_net_contribution.sales_person_net_contribution.payment_entry.on_validate",
         "on_submit": "sales_person_net_contribution.sales_person_net_contribution.payment_entry.on_submit",
+        "on_cancel": "sales_person_net_contribution.sales_person_net_contribution.payment_entry.on_cancel",
     }
 }
 
