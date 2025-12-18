@@ -1159,37 +1159,38 @@ def calculate_net_contribution(payment_entry_name):
         )
 
         # Step 8: Process Case 1 only (single invoice)
-            invoice_name = list(
-                references_analysis["sales_invoice_references"].keys())[0]
-            allocated_amount = references_analysis["sales_invoice_references"][invoice_name]
-            invoice_deduction = invoice_deductions.get(invoice_name, 0)
+        invoice_name = list(
+            references_analysis["sales_invoice_references"].keys())[0]
+        allocated_amount = references_analysis["sales_invoice_references"][invoice_name]
+        invoice_deduction = invoice_deductions.get(invoice_name, 0)
 
-            result = process_single_invoice_case(
-                payment_entry, payment_entry_name, invoice_name,
-                allocated_amount, invoice_deduction
+        result = process_single_invoice_case(
+            payment_entry, payment_entry_name, invoice_name,
+            allocated_amount, invoice_deduction
+        )
+
+        # Add completion and summary messages
+        if result.get("status") == "success":
+            completion_msg = generate_completion_message(
+                case_type, [result]
             )
-
-            # Add completion and summary messages
-            if result.get("status") == "success":
-                completion_msg = generate_completion_message(
-                    case_type, [result]
-                )
-                summary_msg = generate_summary_message(
-                    payment_entry, references_analysis,
-                    references_analysis["sales_invoice_references"],
-                    invoice_deductions, [result]
-                )
+            summary_msg = generate_summary_message(
+                payment_entry, references_analysis,
+                references_analysis["sales_invoice_references"],
+                invoice_deductions, [result]
+            )
             # Combine messages: completion + summary + details (minimal spacing)
-                if result.get("message"):
-                    result["message"] = completion_msg + \
+            if result.get("message"):
+                result["message"] = completion_msg + \
                     "<div style='margin-top: 2px;'></div>" + summary_msg + \
-                    "<div style='margin-top: 2px;'></div>" + result["message"]
+                    "<div style='margin-top: 2px;'></div>" + \
+                    result["message"]
 
-            return {
-                "status": result.get("status", "success"),
-                "message": result.get("message", ""),
-                "values": result.get("values", {})
-            }
+        return {
+            "status": result.get("status", "success"),
+            "message": result.get("message", ""),
+            "values": result.get("values", {})
+        }
 
     except frappe.ValidationError:
         raise
@@ -1206,9 +1207,13 @@ def calculate_net_contribution(payment_entry_name):
 def on_validate(doc, method=None):
     """
     Automatically calculate net contribution when Payment Entry is validated (on save)
-    Only for payment_type = "Receive"
+    Only for payment_type = "Receive" and only for existing documents (not new)
     """
     if doc.payment_type != "Receive":
+        return
+
+    # Skip for new documents (they don't exist in database yet)
+    if doc.is_new() or getattr(doc, "__islocal", False):
         return
 
     try:
