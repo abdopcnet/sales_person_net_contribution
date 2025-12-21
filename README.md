@@ -1,5 +1,8 @@
 # Sales Person Net Contribution
 
+![Version](https://img.shields.io/badge/version-21.12.2025-blue)
+
+
 **App Name:** `sales_person_net_contribution`
 **Version:** 1.0.0
 **License:** MIT
