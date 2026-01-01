@@ -1,6 +1,6 @@
 # Sales Person Net Contribution
 
-![Version](https://img.shields.io/badge/version-21.12.2025-blue)
+![Version](https://img.shields.io/badge/version-1.1.2026-blue)
 
 
 **App Name:** `sales_person_net_contribution`
